@@ -1,0 +1,212 @@
+version: '3'
+
+vars:
+  APP_NAME: wetherly
+  DOCKER_IMAGE: jleski/wetherly
+  DOCKER_TAG: latest
+  CHART_PATH: ./chart
+  GO_FILES:
+    sh: find . -type f -name '*.go' -not -path "./vendor/*"
+  SYSLOG_PORT: 6601
+  SYSLOG_HOST: localhost
+
+env:
+  CGO_ENABLED: 0
+
+tasks:
+  default:
+    cmds:
+      - task: help
+
+  help:
+    desc: Display available tasks
+    silent: true
+    cmds:
+      - echo "Available tasks:"
+      - task -l
+
+  deps:
+    desc: Install development dependencies
+    cmds:
+      - go mod download
+      - go mod tidy
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -s -w {{.GO_FILES}}
+
+  lint:
+    desc: Run linters
+    cmds:
+      - go vet ./...
+      - |
+        if command -v golangci-lint >/dev/null 2>&1; then
+          golangci-lint run
+        else
+          echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+        fi
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v -race ./...
+
+  build:
+    desc: Build the application
+    cmds:
+      - go build -o bin/{{.APP_NAME}} main.go
+
+  run:
+    desc: Run the application locally
+    deps: [build]
+    cmds:
+      - ./bin/{{.APP_NAME}}
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/
+      - rm -f {{.APP_NAME}}
+
+  docker:build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}} .
+
+  docker:push:
+    desc: Push Docker image to registry
+    deps: [docker:build]
+    cmds:
+      - docker push {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}
+
+  helm:lint:
+    desc: Lint Helm chart
+    dir: '{{.CHART_PATH}}'
+    cmds:
+      - helm lint .
+
+  helm:template:
+    desc: Template Helm chart
+    dir: '{{.CHART_PATH}}'
+    cmds:
+      - helm template {{.APP_NAME}} .
+
+  helm:install:
+    desc: Install/Upgrade Helm release
+    deps: [helm:lint]
+    dir: '{{.CHART_PATH}}'
+    cmds:
+      - helm upgrade --install {{.APP_NAME}} . --wait
+
+  helm:uninstall:
+    desc: Uninstall Helm release
+    cmds:
+      - helm uninstall {{.APP_NAME}}
+
+  dev:setup:
+    desc: Setup development environment
+    cmds:
+      - task: deps
+      - mkdir -p bin/
+      - |
+        if ! command -v golangci-lint >/dev/null 2>&1; then
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        fi
+
+  ci:
+    desc: Run CI pipeline tasks
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+      - task: build
+      - task: docker:build
+      - task: helm:lint
+
+  all:
+    desc: Run all tasks (format, lint, test, build)
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+      - task: build
+
+  test:send:
+    desc: Send a test message to the syslog server using netcat
+    cmds:
+      - echo "Test message from netcat at $(date)" | nc -w1 {{.SYSLOG_HOST}} {{.SYSLOG_PORT}}
+
+  test:send:multi:
+    desc: Send multiple test messages to the syslog server
+    cmds:
+      - |
+        for i in {1..5}; do
+          echo "Test message $i from batch sender at $(date)" | nc -w1 {{.SYSLOG_HOST}} {{.SYSLOG_PORT}}
+          sleep 1
+        done
+
+  test:send:logger:
+    desc: Send a test message using logger (if available)
+    cmds:
+      - |
+        if command -v logger >/dev/null 2>&1; then
+          logger -n {{.SYSLOG_HOST}} -P {{.SYSLOG_PORT}} -T "Test message from logger at $(date)"
+        else
+          echo "logger command not found, using netcat instead"
+          echo "<13>Test message from netcat (logger not available) at $(date)" | nc -w1 {{.SYSLOG_HOST}} {{.SYSLOG_PORT}}
+        fi
+
+  test:send:rfc5424:
+    desc: Send a properly formatted RFC5424 syslog message
+    vars:
+      PRIORITY: 13  # facility: user, severity: notice
+      VERSION: "1"
+      TIMESTAMP:
+        sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
+      HOSTNAME:
+        sh: hostname
+      APP_NAME: wetherly-test
+      PROCID: $$
+      MSGID: TEST01
+    cmds:
+      - |
+        MSG="<{{.PRIORITY}}>{{.VERSION}} {{.TIMESTAMP}} {{.HOSTNAME}} {{.APP_NAME}} {{.PROCID}} {{.MSGID}} - Test RFC5424 message"
+        echo "$MSG" | nc -w1 {{.SYSLOG_HOST}} {{.SYSLOG_PORT}}
+
+  test:send:stress:
+    desc: Stress test the server with many messages
+    cmds:
+      - |
+        for i in {1..100}; do
+          echo "Stress test message $i at $(date)" | nc -w1 {{.SYSLOG_HOST}} {{.SYSLOG_PORT}} &
+          if [ $((i % 10)) -eq 0 ]; then
+            sleep 0.5
+          fi
+        done
+        wait
+
+  test:all:
+    desc: Run all syslog test messages
+    cmds:
+      - task: test:send
+      - sleep 1
+      - task: test:send:multi
+      - sleep 1
+      - task: test:send:logger
+      - sleep 1
+      - task: test:send:rfc5424
+      - echo "All test messages sent successfully!"
+
+  run:test:
+    desc: Run the server and send test messages
+    cmds:
+      - task: build
+      - |
+        ./bin/{{.APP_NAME}} & 
+        SERVER_PID=$!
+        echo "Server started with PID $SERVER_PID"
+        sleep 2
+        task test:all
+        echo "Press Ctrl+C to stop the server"
+        wait $SERVER_PID
