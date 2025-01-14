@@ -1,6 +1,8 @@
 # Wetherly: The Mostly Harmless Syslog Server
 
-Welcome, intrepid traveler of the digital cosmos, to **Wetherly**, a simple yet delightfully whimsical syslog server. Inspired by the works of Douglas Adams, this project aims to bring a touch of humor and a dash of practicality to the often mundane world of system logging.
+Welcome, intrepid traveler of the digital cosmos, to **Wetherly**, a simple yet delightfully whimsical syslog server. Inspired by the works of Douglas Adams, this project aims to bring a touch of humor and a dash of practicality to the often mundane world of system logging. 
+
+[Read the full blog post about building this project](https://deployharmlessly.dev/building-a-golang-syslog-server-a-journey-through-the-digital-cosmos) for a deeper dive into its creation and design.
 
 ## Table of Contents
 
