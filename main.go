@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/influxdata/go-syslog/v3/rfc5424"
 )
 
 const (
@@ -24,91 +26,81 @@ const (
     Syslog Server v1.0.0
     ==========================================
 `
+	CyanColor   = "\033[1;36m"
+	GreenColor  = "\033[1;32m"
+	RedColor    = "\033[1;31m"
+	YellowColor = "\033[1;33m"
+	ResetColor  = "\033[0m"
 )
 
 type RFC5424Message struct {
-	Priority  int
-	Version   string
-	Timestamp time.Time
-	Hostname  string
-	AppName   string
-	ProcID    string
-	MsgID     string
-	Message   string
+	Priority       int
+	Version        string
+	Timestamp      time.Time
+	Hostname       string
+	AppName        string
+	ProcID         string
+	MsgID          string
+	StructuredData string // New field for structured data
+	Message        string
 }
 
-func parseRFC5424Message(msg string) (*RFC5424Message, error) {
-	parts := strings.Fields(msg)
-	if len(parts) < 8 {
-		return nil, fmt.Errorf("invalid RFC5424 message format")
-	}
-
-	//priority := parts[0][1:3] // Extract priority from <PRI>
-	version := parts[1]
-	timestamp, err := time.Parse("2006-01-02T15:04:05Z", parts[2])
+func parseRFC5424Message(msg string) (*rfc5424.SyslogMessage, error) {
+	parser := rfc5424.NewParser()
+	parsedMsg, err := parser.Parse([]byte(msg))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error parsing RFC5424 message: %w", err)
 	}
-	hostname := parts[3]
-	appName := parts[4]
-	procID := parts[5]
-	msgID := parts[6]
-	message := strings.Join(parts[7:], " ") // Join remaining parts as message
 
-	return &RFC5424Message{
-		Priority:  0,
-		Version:   version,
-		Timestamp: timestamp,
-		Hostname:  hostname,
-		AppName:   appName,
-		ProcID:    procID,
-		MsgID:     msgID,
-		Message:   message,
-	}, nil
+	// Type assertion to convert syslog.Message to *rfc5424.SyslogMessage
+	rfc5424Msg, ok := parsedMsg.(*rfc5424.SyslogMessage)
+	if !ok {
+		return nil, fmt.Errorf("parsed message is not of type *rfc5424.SyslogMessage")
+	}
+
+	return rfc5424Msg, nil
 }
 
 func printStartupInfo() {
-	fmt.Print("\033[1;36m") // Cyan color
+	fmt.Print(CyanColor)
 	fmt.Print(BANNER)
-	fmt.Print("\033[0m") // Reset color
+	fmt.Print(ResetColor)
 
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
 	}
 
-	fmt.Printf("\033[1;32m") // Green color
+	fmt.Print(GreenColor)
 	fmt.Printf("🚀 Starting Wetherly Syslog Server...\n")
 	fmt.Printf("📅 Time: %s\n", time.Now().Format(time.RFC1123))
 	fmt.Printf("💻 Hostname: %s\n", hostname)
 	fmt.Printf("🔌 Protocol: TCP\n")
 	fmt.Printf("🎯 Port: 6601\n")
 	fmt.Printf("📦 Buffer Size: %d bytes\n", BUFFER_SIZE)
-	fmt.Printf("\033[0m") // Reset color
+	fmt.Print(ResetColor)
 	fmt.Println("==========================================")
 }
 
 func main() {
 	printStartupInfo()
 
-	// Create TCP listener
 	listener, err := net.Listen("tcp", SYSLOG_PORT)
 	if err != nil {
-		log.Fatalf("\033[1;31mError creating TCP listener: %v\033[0m", err)
+		log.Fatalf("%sError creating TCP listener: %v%s", RedColor, err, ResetColor)
 	}
 	defer listener.Close()
 
-	fmt.Printf("\033[1;32m✅ Server is ready to accept connections\033[0m\n\n")
+	fmt.Printf("%s✅ Server is ready to accept connections%s\n\n", GreenColor, ResetColor)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("\033[1;31mError accepting connection: %v\033[0m", err)
+			log.Printf("%sError accepting connection: %v%s", RedColor, err, ResetColor)
 			continue
 		}
 
-		fmt.Printf("\033[1;34m📥 New connection from %s\033[0m\n", conn.RemoteAddr())
-		// Handle each connection in a goroutine
+		fmt.Printf("%s📥 New connection from %s%s\n", GreenColor, conn.RemoteAddr(), ResetColor)
 		go handleConnection(conn)
 	}
 }
@@ -121,9 +113,9 @@ func handleConnection(conn net.Conn) {
 		n, err := conn.Read(buffer)
 		if err != nil {
 			if err.Error() != "EOF" {
-				log.Printf("\033[1;31mError reading from connection: %v\033[0m", err)
+				log.Printf("%sError reading from connection: %v%s", RedColor, err, ResetColor)
 			}
-			fmt.Printf("\033[1;33m📤 Connection closed from %s\033[0m\n", conn.RemoteAddr())
+			fmt.Printf("%s📤 Connection closed from %s%s\n", YellowColor, conn.RemoteAddr(), ResetColor)
 			return
 		}
 
@@ -133,13 +125,12 @@ func handleConnection(conn net.Conn) {
 		if strings.HasPrefix(message, "<") {
 			parsedMsg, err := parseRFC5424Message(message)
 			if err != nil {
-				fmt.Printf("\033[1;31mError parsing RFC5424 message: %v\033[0m\n", err)
+				fmt.Printf("%sError parsing RFC5424 message: %v%s\n", RedColor, err, ResetColor)
 			} else {
-				fmt.Printf("\033[1;32m[%s] Parsed RFC5424 Message:\033[0m\n\033[1;37m%+v\033[0m\n", timestamp, parsedMsg)
+				fmt.Printf("%s[%s] Parsed RFC5424 Message:%s\n%s%+v%s\n", GreenColor, timestamp, ResetColor, GreenColor, parsedMsg, ResetColor)
 			}
 		} else {
-			fmt.Printf("\033[1;32m[%s] Message from %v:\033[0m\n\033[1;37m%s\033[0m\n",
-				timestamp, conn.RemoteAddr(), message)
+			fmt.Printf("%s[%s] Message from %v:%s\n%s%s%s\n", GreenColor, timestamp, conn.RemoteAddr(), ResetColor, GreenColor, message, ResetColor)
 		}
 	}
 }

@@ -52,6 +52,11 @@ tasks:
     cmds:
       - go test -v -race ./...
 
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - go test -v ./...
+
   build:
     desc: Build the application
     cmds:
